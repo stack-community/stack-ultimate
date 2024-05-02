@@ -1,0 +1,25 @@
+[package]
+name = "stack"
+version = "1.12.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+opener = "0.6.1"
+rand = "0.8"
+reqwest = { version = "0.11.0", features = ["blocking"] }
+rodio = "0.17.3"
+sys-info = "0.7.0"
+clap = "3.0"
+clearscreen = "2.0.1"
+petgraph = "0.5.1"
+nalgebra = "0.32.5"
+rusqlite = { version = "0.25.2", features = ["bundled"] }
+tera = "1.12.0"
+clipboard = "0.5"
+rusty_audio = "1.4.1"
+regex = "1.10.4"
+base64 = "0.22.1"
+serde_json = "1.0.116"
+percent-encoding = "2.3.1"
