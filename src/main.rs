@@ -1242,6 +1242,7 @@ impl Executor {
                     "string" => self.stack.push(Type::String(value.get_string())),
                     "bool" => self.stack.push(Type::Bool(value.get_bool())),
                     "list" => self.stack.push(Type::List(value.get_list())),
+                    "json" => self.stack.push(Type::Json(value.get_json())),
                     "error" => self.stack.push(Type::Error(value.get_string())),
                     _ => self.stack.push(value),
                 }
