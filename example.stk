@@ -1,0 +1,24 @@
+
+(
+    [(StackServer)
+        [(text) ip-address (からアクセスされました) concat]
+        [(type) (info)]
+    ] [] instance msgbox
+) (alert) var
+
+[(hello)
+    [(address) (0.0.0.0:8887)]
+    [(buffer-size) 1024]
+]
+[] instance (option) var
+
+option [
+    [[(GET /)] (
+        (body) var body println
+        (ip-address) var ip-address println
+        alert thread
+
+        (text/html)
+        (Hello, world!)
+    )]
+] start-server
