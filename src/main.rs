@@ -4,6 +4,11 @@ use clipboard::{ClipboardContext, ClipboardProvider};
 use nalgebra;
 use native_dialog::MessageDialog;
 use native_dialog::MessageType;
+use opencv::imgproc::resize;
+use opencv::{
+    core::{self, Mat},
+    highgui, imgcodecs, imgproc,
+};
 use percent_encoding::percent_decode_str;
 use petgraph::dot::{Config, Dot};
 use petgraph::Graph;
@@ -16,7 +21,7 @@ use serde_json::{self, json, Value};
 use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File};
-use std::io::{self, Error, Read, BufReader, Write};
+use std::io::{self, BufReader, Error, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::thread::{self, sleep};
@@ -116,6 +121,7 @@ enum Type {
     Object(String, HashMap<String, Type>),
     Json(Value),
     Binary(Vec<u8>),
+    Image(Mat),
     Error(String),
 }
 
@@ -169,6 +175,7 @@ impl Type {
                 text += "}";
                 text
             }
+            Type::Image(_) => "{Image}".to_string(),
         }
     }
 
@@ -217,6 +224,7 @@ impl Type {
                 text
             }
             Type::Binary(i) => format!("Binary<{}>", i.len()),
+            Type::Image(_) => "{Image}".to_string(),
         }
     }
 
@@ -300,6 +308,13 @@ impl Type {
         match self {
             Type::Object(name, value) => (name.to_owned(), value.to_owned()),
             _ => ("".to_string(), HashMap::new()),
+        }
+    }
+
+    fn get_image(&self) -> Mat {
+        match self {
+            Type::Image(i) => i.clone(),
+            _ => Mat::default(),
         }
     }
 }
@@ -1266,6 +1281,7 @@ impl Executor {
                     Type::Binary(_) => "binary".to_string(),
                     Type::Json(_) => "json".to_string(),
                     Type::Object(name, _) => name.to_string(),
+                    Type::Image(_) => "image".to_string(),
                 };
 
                 self.stack.push(Type::String(result));
@@ -1775,6 +1791,233 @@ impl Executor {
                 self.stack.push(Type::String(dot))
             }
 
+            // Commands of OpenCV image processing
+
+            // Open image file
+            "open-image" => {
+                let image_path: &str = &self.pop_stack().get_string();
+                self.stack.push(Type::Image(
+                    imgcodecs::imread(image_path, imgcodecs::IMREAD_COLOR).unwrap(),
+                ))
+            }
+
+            // Show image using GUI window
+            "show-image" => {
+                //Display the image
+                let window_name: &str = "Image Window";
+                highgui::named_window(window_name, highgui::WINDOW_NORMAL).unwrap();
+                highgui::imshow(window_name, &self.pop_stack().get_image()).unwrap();
+
+                // Wait for a key press
+                highgui::wait_key(0).unwrap();
+            }
+
+            // Modify image to grayscale
+            "to-grayscale" => {
+                fn to_grayscale(img: &Mat) -> Mat {
+                    let mut gray_img = Mat::default();
+                    imgproc::cvt_color(img, &mut gray_img, imgproc::COLOR_BGR2GRAY, 0).unwrap();
+                    gray_img
+                }
+
+                let img = &self.pop_stack().get_image();
+                self.stack.push(Type::Image(to_grayscale(img)))
+            }
+
+            // Modify image to invert its color
+            "invert-color" => {
+                fn invert_color(img: &Mat) -> Mat {
+                    let mut inverted_img = Mat::default();
+                    core::bitwise_not(img, &mut inverted_img, &core::no_array()).unwrap();
+
+                    inverted_img
+                }
+
+                let img = &self.pop_stack().get_image();
+                self.stack.push(Type::Image(invert_color(img)))
+            }
+
+            // Modify image to flip vertical or horizontal
+            "flip-image" => {
+                fn flip(img: &Mat, direction: i32) -> Mat {
+                    let mut flipped_img = Mat::default();
+                    core::flip(img, &mut flipped_img, direction).unwrap();
+                    flipped_img
+                }
+
+                let direction = self.pop_stack().get_string();
+                let direction = if direction == "vertical" {
+                    0
+                } else if direction == "horizontal" {
+                    1
+                } else {
+                    self.stack.push(Type::Error("flip-image".to_string()));
+                    return;
+                };
+                let img = &self.pop_stack().get_image();
+                self.stack.push(Type::Image(flip(img, direction)))
+            }
+
+            // Modify image to blur using gaussian
+            "gaussian-blur" => {
+                fn gaussian_blur(img: &Mat, ksize: i32) -> Mat {
+                    let mut blurred_img = Mat::default();
+                    let ksize = core::Size::new(ksize, ksize);
+                    imgproc::gaussian_blur(
+                        img,
+                        &mut blurred_img,
+                        ksize,
+                        0.0,
+                        0.0,
+                        core::BORDER_DEFAULT,
+                    )
+                    .unwrap();
+                    blurred_img
+                }
+
+                let ksize = self.pop_stack().get_number();
+                let img = &self.pop_stack().get_image();
+                self.stack
+                    .push(Type::Image(gaussian_blur(img, ksize as i32)))
+            }
+
+            // Modify image to resize its width and height
+            "resize-image" => {
+                fn resize_image(img: &Mat, width: i32, height: i32) -> Mat {
+                    let mut resized_img = Mat::default();
+                    resize(
+                        img,
+                        &mut resized_img,
+                        core::Size::new(width, height),
+                        0.0,
+                        0.0,
+                        0,
+                    )
+                    .unwrap();
+                    resized_img
+                }
+                let height = self.pop_stack().get_number();
+                let width = self.pop_stack().get_number();
+                let img = &self.pop_stack().get_image();
+                self.stack
+                    .push(Type::Image(resize_image(img, width as i32, height as i32)))
+            }
+
+            // Detect edge of image
+            "edge-detect" => {
+                fn edge_detection(img: &Mat) -> Mat {
+                    let mut gray_img = Mat::default();
+                    let mut edges = Mat::default();
+                    imgproc::cvt_color(img, &mut gray_img, imgproc::COLOR_BGR2GRAY, 0).unwrap();
+                    imgproc::canny(&gray_img, &mut edges, 100.0, 200.0, 3, false).unwrap();
+                    edges
+                }
+                let img = &self.pop_stack().get_image();
+                self.stack.push(Type::Image(edge_detection(img)))
+            }
+
+            // Modify image to mapping its color
+            "color-map" => {
+                fn apply_color_map(img: &Mat) -> Mat {
+                    let mut color_img = Mat::default();
+                    imgproc::apply_color_map(img, &mut color_img, imgproc::COLORMAP_JET).unwrap();
+                    color_img
+                }
+                let img = &self.pop_stack().get_image();
+                self.stack.push(Type::Image(apply_color_map(img)))
+            }
+
+            // Modify image to morphology operation
+            "morphology-operation" => {
+                fn morphology_operation(img: &Mat, operation: i32, kernel_size: i32) -> Mat {
+                    let mut result_img = Mat::default();
+                    let kernel = imgproc::get_structuring_element(
+                        imgproc::MORPH_RECT,
+                        opencv::core::Size::new(kernel_size, kernel_size),
+                        core::Point::new(-1, -1),
+                    )
+                    .unwrap();
+
+                    imgproc::morphology_ex(
+                        img,
+                        &mut result_img,
+                        operation,
+                        &kernel,
+                        core::Point::new(-1, -1),
+                        1,
+                        core::BORDER_CONSTANT,
+                        core::Scalar::all(0.0),
+                    )
+                    .unwrap();
+
+                    result_img
+                }
+                let kernel_size = self.pop_stack().get_number();
+                let operation = match self.pop_stack().get_string().as_str() {
+                    "dilate" => imgproc::MORPH_DILATE,
+                    "erode" => imgproc::MORPH_ERODE,
+                    "open" => imgproc::MORPH_OPEN,
+                    "close" => imgproc::MORPH_CLOSE,
+                    _ => {
+                        self.stack
+                            .push(Type::Error("morphology-operation".to_string()));
+                        return;
+                    }
+                };
+                let img = &self.pop_stack().get_image();
+                self.stack.push(Type::Image(morphology_operation(
+                    img,
+                    operation as i32,
+                    kernel_size as i32,
+                )))
+            }
+
+            // Modify image to histogram equalization
+            "histogram-equalization" => {
+                fn histogram_equalization(img: &Mat) -> Mat {
+                    let mut equalized_img = Mat::default();
+                    imgproc::equalize_hist(img, &mut equalized_img).unwrap();
+                    equalized_img
+                }
+
+                let img = &self.pop_stack().get_image();
+                self.stack.push(Type::Image(histogram_equalization(img)))
+            }
+
+            // Save image to file
+            "save-image" => {
+                let name = &self.pop_stack().get_string();
+                let img = &self.pop_stack().get_image();
+                opencv::imgcodecs::imwrite(name, &img, &core::Vector::new()).unwrap();
+            }
+
+            // Modify image to sharpe
+            "to-sharpe" => {
+                fn to_sharpe(img: Mat, level: f64) -> Mat {
+                    let kernel = Mat::from_slice_2d(&[
+                        [-1f64, -1f64, -1f64],
+                        [-1f64, level, -1f64],
+                        [-1f64, -1f64, -1f64],
+                    ])
+                    .unwrap();
+                    let mut sharpened_img = Mat::default();
+                    imgproc::filter_2d(
+                        &img,
+                        &mut sharpened_img,
+                        -1,
+                        &kernel,
+                        core::Point::new(-1, -1),
+                        0.0,
+                        core::BORDER_DEFAULT,
+                    )
+                    .unwrap();
+                    sharpened_img
+                }
+                let level = self.pop_stack().get_number();
+                let img = self.pop_stack().get_image();
+                self.stack.push(Type::Image(to_sharpe(img, level)))
+            }
+
             // Commands of GUI processing
 
             // GUI processing
@@ -1871,7 +2114,7 @@ impl Executor {
         }
     }
 
-        /// Http request handler
+    /// Http request handler
     fn handle(
         &mut self,
         mut stream: TcpStream,
